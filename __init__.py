@@ -122,25 +122,6 @@ def capture_scene(scene, variant, objects=None):
         capture(obj, state)
 
 
-def clear_scene_materials(objects):
-    groups = {}
-    for obj in objects:
-        groups.setdefault(obj.data, []).append(obj)
-    for mesh, members in groups.items():
-        if any(material is not None for material in mesh.materials):
-            # Keep shared data together within the scene, without editing other users.
-            if not mesh.is_editable or mesh.users - int(mesh.use_fake_user) > len(members):
-                mesh = mesh.copy()
-                for obj in members:
-                    obj.data = mesh
-            for i in range(len(mesh.materials)):
-                mesh.materials[i] = None
-        for obj in members:
-            for slot in obj.material_slots:
-                if slot.link == "OBJECT" and slot.material is not None:
-                    slot.material = None
-
-
 def unique_name(scene, name):
     existing = {variant.name for variant in scene.antitakes_scene_variants}
     suffix = 1
@@ -151,49 +132,90 @@ def unique_name(scene, name):
     return result
 
 
-def assignment_for(obj, saved):
-    mesh = obj.data
-    if saved.signature != topology_signature(mesh):
-        raise ValueError("Mesh-Topologie geändert")
-    if any((slot.had_material and slot.material is None)
-           or (slot.had_mesh_material and slot.mesh_material is None) for slot in saved.slots):
-        raise ValueError("Ein gespeichertes Material fehlt")
-    try:
-        values = decode_assignment(saved.assignment, len(mesh.polygons))
-    except (ValueError, zlib.error) as exc:
-        raise ValueError("Gespeicherte Flächenzuweisung ist beschädigt") from exc
-    if any(i < 0 or i >= max(1, len(saved.slots)) for i in values):
-        raise ValueError("Ungültiger Material-Slot in der Flächenzuweisung")
+def current_assignment(mesh):
+    values = integers(len(mesh.polygons))
+    mesh.polygons.foreach_get("material_index", values)
     return values
 
 
-def apply_object(obj, saved, assignment):
+def variant_materials(obj, saved):
     mesh = obj.data
-    target_materials = [slot.mesh_material for slot in saved.slots]
-    current_assignment = integers(len(mesh.polygons))
-    mesh.polygons.foreach_get("material_index", current_assignment)
-    materials_changed = list(mesh.materials) != target_materials
-    assignment_changed = current_assignment != assignment
-    # Only detach when a shared/read-only mesh needs changes to its underlying data.
-    if (materials_changed or assignment_changed) and (
-        not mesh.is_editable or mesh.users > 1 + int(mesh.use_fake_user)
-    ):
-        mesh = mesh.copy()
-        obj.data = mesh
-    if materials_changed:
-        mesh.materials.clear()
-        for material in target_materials:
-            mesh.materials.append(material)
-    for slot, saved_slot in zip(obj.material_slots, saved.slots):
-        link = "OBJECT" if saved_slot.object_link else "DATA"
-        if slot.link != link:
-            slot.link = link
-        if saved_slot.object_link and slot.material != saved_slot.material:
-            slot.material = saved_slot.material
-    if materials_changed or assignment_changed:
-        mesh.polygons.foreach_set("material_index", assignment)
-        mesh.update()
-    obj.active_material_index = min(saved.active_slot, max(0, len(saved.slots) - 1))
+    if any((slot.had_material and slot.material is None)
+           or (slot.had_mesh_material and slot.mesh_material is None) for slot in saved.slots):
+        raise ValueError("Ein gespeichertes Material fehlt")
+
+    data = tuple(slot.mesh_material for slot in saved.slots)
+    links = tuple((slot.object_link, slot.material if slot.object_link else None) for slot in saved.slots)
+    topology_changed = saved.signature != topology_signature(mesh)
+    if topology_changed:
+        # Existing faces now belong to a different topology. Keep their slot indices.
+        values = current_assignment(mesh)
+        count = max(len(mesh.materials), max(values, default=-1) + 1 if any(values) else 0)
+        extra = max(0, count - len(data))
+        data += (None,) * extra
+        links += ((False, None),) * extra
+    else:
+        try:
+            values = decode_assignment(saved.assignment, len(mesh.polygons))
+        except (ValueError, zlib.error) as exc:
+            raise ValueError("Gespeicherte Flächenzuweisung ist beschädigt") from exc
+        if any(i < 0 or i >= max(1, len(data)) for i in values):
+            raise ValueError("Ungültiger Material-Slot in der Flächenzuweisung")
+    return data, values, links, topology_changed
+
+
+def blank_materials(obj):
+    links = tuple((slot.link == "OBJECT", None) for slot in obj.material_slots)
+    return (None,) * len(links), current_assignment(obj.data), links
+
+
+def current_links(obj):
+    return tuple((slot.link == "OBJECT", slot.material if slot.link == "OBJECT" else None)
+                 for slot in obj.material_slots)
+
+
+def apply_material_plan(plan):
+    # Preflight: never replace a mesh, break a link or alter an object in another scene.
+    groups = {}
+    for obj, data, values, links in plan:
+        groups.setdefault(obj.data, []).append((obj, data, values, links, obj.active_material_index))
+    prepared = []
+    for mesh, rows in groups.items():
+        obj, data, values, _, _ = rows[0]
+        if any(data != row[1] or values != row[2] for row in rows[1:]):
+            raise ValueError(f"{obj.name}: Ein geteiltes Mesh hat widersprüchliche Materialzuweisungen")
+        previous_data = tuple(mesh.materials)
+        previous_values = current_assignment(mesh)
+        data_changed = data != previous_data or values != previous_values
+        if data_changed and (not mesh.is_editable or mesh.users - int(mesh.use_fake_user) > len(rows)):
+            raise ValueError(f"{obj.name}: Das Mesh wird außerhalb der Variante verwendet oder ist schreibgeschützt")
+        for member, _, _, links, _ in rows:
+            if len(member.users_scene) > 1 and (data_changed or current_links(member) != links):
+                raise ValueError(f"{member.name}: Das Objekt ist mit mehreren Szenen verknüpft")
+        prepared.append((mesh, rows, data, values, previous_data, previous_values))
+
+    for mesh, rows, data, values, previous_data, previous_values in prepared:
+        if len(previous_data) != len(data):
+            mesh.materials.clear()
+            for material in data:
+                mesh.materials.append(material)
+        elif previous_data != data:
+            for i, material in enumerate(data):
+                if previous_data[i] != material:
+                    mesh.materials[i] = material
+        for obj, _, _, links, active_slot in rows:
+            for slot, (object_link, material) in zip(obj.material_slots, links):
+                link = "OBJECT" if object_link else "DATA"
+                if slot.link != link:
+                    slot.link = link
+                if object_link and slot.material != material:
+                    slot.material = material
+            if obj.active_material_index != active_slot:
+                obj.active_material_index = min(active_slot, max(0, len(data) - 1))
+        if previous_values != values or len(previous_data) != len(data):
+            mesh.polygons.foreach_set("material_index", values)
+        if previous_data != data or previous_values != values:
+            mesh.update()
 
 
 def object_mode(cls, context):
@@ -234,7 +256,11 @@ class ANTITAKES_OT_save(Operator):
         name = unique_name(scene, self.name.strip() or "Variante")
         is_first = not scene.antitakes_scene_variants
         if not is_first:
-            clear_scene_materials(objects)
+            try:
+                apply_material_plan([(obj, *blank_materials(obj)) for obj in objects])
+            except ValueError as exc:
+                self.report({"ERROR"}, f"{exc}. Es wurden keine Materialien geändert.")
+                return {"CANCELLED"}
         variant = scene.antitakes_scene_variants.add()
         variant.name = name
         capture_scene(scene, variant, objects)
@@ -265,6 +291,7 @@ class ANTITAKES_OT_apply(Operator):
         members = set(scene.objects)
         plan = []
         skipped = 0
+        changed_topology = 0
         for state in variant.objects:
             obj = state.object_ref
             if obj is None or obj not in members:
@@ -274,19 +301,28 @@ class ANTITAKES_OT_apply(Operator):
                 self.report({"ERROR"}, f"{obj.name}: Objekt ist nicht im Objektmodus bearbeitbar")
                 return {"CANCELLED"}
             try:
-                assignment = assignment_for(obj, state)
+                data, assignment, links, topology_changed = variant_materials(obj, state)
             except ValueError as exc:
                 self.report({"ERROR"}, f"{obj.name}: {exc}. Variante wurde nicht angewendet.")
                 return {"CANCELLED"}
-            plan.append((obj, state, assignment))
+            plan.append((obj, data, assignment, links))
+            changed_topology += topology_changed
         if not plan:
             self.report({"WARNING"}, "Kein gespeichertes Mesh-Objekt ist noch in der Szene.")
             return {"CANCELLED"}
-        for obj, state, assignment in plan:
-            apply_object(obj, state, assignment)
+        try:
+            apply_material_plan(plan)
+        except ValueError as exc:
+            self.report({"ERROR"}, f"{exc}. Es wurden keine Materialien geändert.")
+            return {"CANCELLED"}
         scene.antitakes_scene_variant_index = index
+        notices = []
+        if changed_topology:
+            notices.append(f"{changed_topology} Mesh(es) mit geänderter Topologie: aktuelle Flächenzuordnungen beibehalten")
         if skipped:
-            self.report({"WARNING"}, f"„{variant.name}“ angewendet; {skipped} fehlende Objekte übersprungen.")
+            notices.append(f"{skipped} fehlende Objekte übersprungen")
+        if notices:
+            self.report({"WARNING"}, f"„{variant.name}“ angewendet. " + "; ".join(notices))
         else:
             self.report({"INFO"}, f"„{variant.name}“ angewendet: {len(plan)} Mesh-Objekte")
         return {"FINISHED"}
