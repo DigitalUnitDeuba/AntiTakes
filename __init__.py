@@ -113,13 +113,32 @@ def capture(obj, variant):
     variant.active_slot = obj.active_material_index
 
 
-def capture_scene(scene, variant):
+def capture_scene(scene, variant, objects=None):
     variant.objects.clear()
-    for obj in scene_meshes(scene):
+    for obj in scene_meshes(scene) if objects is None else objects:
         state = variant.objects.add()
         state.object_ref = obj
         state.object_name = obj.name
         capture(obj, state)
+
+
+def clear_scene_materials(objects):
+    groups = {}
+    for obj in objects:
+        groups.setdefault(obj.data, []).append(obj)
+    for mesh, members in groups.items():
+        if any(material is not None for material in mesh.materials):
+            # Keep shared data together within the scene, without editing other users.
+            if not mesh.is_editable or mesh.users - int(mesh.use_fake_user) > len(members):
+                mesh = mesh.copy()
+                for obj in members:
+                    obj.data = mesh
+            for i in range(len(mesh.materials)):
+                mesh.materials[i] = None
+        for obj in members:
+            for slot in obj.material_slots:
+                if slot.link == "OBJECT" and slot.material is not None:
+                    slot.material = None
 
 
 def unique_name(scene, name):
@@ -187,7 +206,7 @@ def object_mode(cls, context):
 class ANTITAKES_OT_save(Operator):
     bl_idname = "antitakes_variants.save"
     bl_label = "Neue Szenenvariante speichern"
-    bl_description = "Material-Slots und Flächenzuweisungen aller bearbeitbaren Mesh-Objekte der Szene sichern"
+    bl_description = "Erste Variante übernimmt aktuelle Materialien; weitere Varianten starten ohne Materialien"
     bl_options = {"REGISTER", "UNDO"}
 
     name: StringProperty(name="Variantenname", default="Variante")
@@ -200,14 +219,28 @@ class ANTITAKES_OT_save(Operator):
         self.name = unique_name(context.scene, "Variante")
         return context.window_manager.invoke_props_dialog(self, width=320)
 
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "name")
+        if context.scene.antitakes_scene_variants:
+            layout.label(text="Die neue Variante startet ohne Materialien.", icon="INFO")
+            layout.label(text="Nicht gespeicherte Materialänderungen gehen dabei verloren.")
+        else:
+            layout.label(text="Die aktuellen Materialien werden übernommen.", icon="INFO")
+
     def execute(self, context):
         scene = context.scene
+        objects = scene_meshes(scene)
         name = unique_name(scene, self.name.strip() or "Variante")
+        is_first = not scene.antitakes_scene_variants
+        if not is_first:
+            clear_scene_materials(objects)
         variant = scene.antitakes_scene_variants.add()
         variant.name = name
-        capture_scene(scene, variant)
+        capture_scene(scene, variant, objects)
         scene.antitakes_scene_variant_index = len(scene.antitakes_scene_variants) - 1
-        self.report({"INFO"}, f"„{name}“ gespeichert: {len(variant.objects)} Mesh-Objekte")
+        mode = "mit aktuellen Materialien" if is_first else "ohne Materialien"
+        self.report({"INFO"}, f"„{name}“ {mode} gespeichert: {len(variant.objects)} Mesh-Objekte")
         return {"FINISHED"}
 
 
@@ -261,7 +294,7 @@ class ANTITAKES_OT_apply(Operator):
 
 class ANTITAKES_OT_update(Operator):
     bl_idname = "antitakes_variants.update"
-    bl_label = "Szenenvariante überschreiben"
+    bl_label = "Aktuelle Zuweisungen speichern"
     bl_description = "Die gewählte Variante mit der aktuellen Szene überschreiben"
     bl_options = {"REGISTER", "UNDO"}
 
@@ -342,7 +375,7 @@ class ANTITAKES_PT_variants(Panel):
         box.label(text=f"{len(variant.objects)} gespeicherte Mesh-Objekte", icon="MESH_DATA")
         row = box.row(align=True)
         row.operator("antitakes_variants.apply", text="Anwenden", icon="PLAY")
-        row.operator("antitakes_variants.update", text="", icon="FILE_REFRESH")
+        row.operator("antitakes_variants.update", text="Zuweisungen speichern", icon="FILE_REFRESH")
         row.operator("antitakes_variants.remove", text="", icon="TRASH")
 
 

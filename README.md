@@ -9,8 +9,9 @@ AntiTakes benötigt Blender 4.2 oder neuer. ZIP über **Bearbeiten → Einstellu
 ## Verwendung
 
 1. Im Objektmodus die Seitenleiste im 3D-Viewport mit **N** öffnen.
-2. Im Tab **AntiTakes** auf **Neue Szenenvariante** klicken, um die aktuellen Zuweisungen der gesamten Szene zu sichern.
-3. Materialien ändern und eine zweite Variante speichern. Mit dem Pfeil neben einer Variante alle gespeicherten Zuweisungen gemeinsam wiederherstellen.
+2. Im Tab **AntiTakes** auf **Neue Szenenvariante** klicken, um die aktuellen Zuweisungen der gesamten Szene als erste Variante zu sichern.
+3. Jede weitere **Neue Szenenvariante** leert die Materialien der Szene. Die Slots und ihre Zuordnung zu den Flächen bleiben als Vorlage bestehen. Bereits gespeicherte Varianten werden nicht verändert.
+4. Neue Materialien zuweisen und **Zuweisungen speichern** klicken, bevor du wechselst oder eine neue Variante anlegst. Mit dem Pfeil neben einer Variante stellst du ihre gespeicherten Zuweisungen wieder her.
 
 Neue Objekte bleiben beim Anwenden älterer Varianten unverändert, bis diese überschrieben werden. Fehlende Objekte werden mit Hinweis übersprungen. Ist die Topologie eines vorhandenen Objekts verändert, wird der Wechsel vor dem Anwenden abgebrochen. Verknüpfte, nicht bearbeitbare Mesh-Objekte und Library Overrides werden nicht erfasst. Geteilte Mesh-Daten können bei Bedarf für geänderte Zuweisungen getrennt werden.
 
