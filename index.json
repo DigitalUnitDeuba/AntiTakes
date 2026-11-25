@@ -1,0 +1,26 @@
+{
+  "version": "v1",
+  "blocklist": [],
+  "data": [
+    {
+      "schema_version": "1.0.0",
+      "id": "antitakes",
+      "name": "AntiTakes",
+      "tagline": "Materialvarianten und Fl\u00e4chenzuweisungen pro Objekt sichern",
+      "version": "1.0.0",
+      "type": "add-on",
+      "maintainer": "AntiTakes",
+      "license": [
+        "SPDX:GPL-3.0-or-later"
+      ],
+      "blender_version_min": "4.2.0",
+      "tags": [
+        "Material",
+        "3D View"
+      ],
+      "archive_url": "./antitakes-1.0.0.zip",
+      "archive_size": 16457,
+      "archive_hash": "sha256:4235715c20740bf15cc49f820961d40c4d2a0609ef6ead018ba3ed615849046e"
+    }
+  ]
+}
