@@ -6,8 +6,8 @@
       "schema_version": "1.0.0",
       "id": "antitakes",
       "name": "AntiTakes",
-      "tagline": "Materialvarianten und Fl\u00e4chenzuweisungen pro Objekt sichern",
-      "version": "1.0.0",
+      "tagline": "Materialvarianten und Fl\u00e4chenzuweisungen pro Szene sichern",
+      "version": "1.1.0",
       "type": "add-on",
       "maintainer": "AntiTakes",
       "license": [
@@ -18,9 +18,9 @@
         "Material",
         "3D View"
       ],
-      "archive_url": "./antitakes-1.0.0.zip",
-      "archive_size": 16457,
-      "archive_hash": "sha256:4235715c20740bf15cc49f820961d40c4d2a0609ef6ead018ba3ed615849046e"
+      "archive_url": "./antitakes-1.1.0.zip",
+      "archive_size": 17323,
+      "archive_hash": "sha256:f28cc3950abdf736b6a00c3d3876359fde8019779d59a66c595c57251af22006"
     }
   ]
 }
